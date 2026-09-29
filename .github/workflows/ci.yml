@@ -1,0 +1,49 @@
+# Continuous integration: lint + regression on every push / pull request.
+# Uses the same Ubuntu 24.04 packages recommended in docs/getting_started.md.
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  regress:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            verilator gcc-riscv64-unknown-elf binutils-riscv64-unknown-elf \
+            g++ make python3 python3-matplotlib
+          verilator --version
+          riscv64-unknown-elf-gcc --version | head -1
+
+      - name: Lint RTL (Verilator -Wall)
+        run: make lint
+
+      - name: Smoke regression
+        run: python3 scripts/regress.py --suite smoke -j 4
+
+      - name: Block-level testbenches (cache, branch predictor)
+        run: python3 scripts/regress.py --suite unit -j 4
+
+      - name: Directed + ISA tests on baseline and full configurations
+        run: |
+          python3 scripts/regress.py --suite directed --configs baseline,full -j 4
+          python3 scripts/regress.py --suite isa --configs baseline,full -j 4
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-report
+          path: |
+            build/regress/report.md
+            build/regress/junit.xml
+            build/runs/**/*.log
+          if-no-files-found: ignore

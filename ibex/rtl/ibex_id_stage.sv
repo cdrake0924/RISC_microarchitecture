@@ -40,6 +40,7 @@ module ibex_id_stage #(
   input  logic [15:0]               instr_rdata_c_i,       // from IF-ID pipeline registers
   input  logic                      instr_is_compressed_i,
   input  logic                      instr_bp_taken_i,
+  input  ibex_uarch_pkg::bp_meta_t  instr_bp_meta_i,       // [uarch] prediction metadata
   output logic                      instr_req_o,
   output logic                      instr_first_cycle_id_o,
   output logic                      instr_valid_clear_o,   // kill instr in IF-ID reg
@@ -49,6 +50,7 @@ module ibex_id_stage #(
 
   // Jumps and branches
   input  logic                      branch_decision_i,
+  input  logic [31:0]               branch_target_ex_i,    // [uarch] jump target from EX
 
   // IF and ID stage signals
   output logic                      pc_set_o,
@@ -189,7 +191,12 @@ module ibex_id_stage #(
                                                         // access to finish before proceeding
   output logic                      perf_mul_wait_o,
   output logic                      perf_div_wait_o,
-  output logic                      instr_id_done_o
+  output logic                      instr_id_done_o,
+
+  // [uarch] Branch predictor training and performance events
+  output ibex_uarch_pkg::bp_cond_upd_t bp_cond_upd_o,     // one pulse per conditional branch
+  output ibex_uarch_pkg::bp_jump_upd_t bp_jump_upd_o,     // one pulse per JAL/JALR
+  output ibex_uarch_pkg::bp_perf_t     bp_perf_o
 );
 
   import ibex_pkg::*;
@@ -598,6 +605,7 @@ module ibex_id_stage #(
     .branch_set_i     (branch_set),
     .branch_not_set_i (branch_not_set),
     .jump_set_i       (jump_set),
+    .jump_mispredict_i(jump_mispredict),
 
     // interrupt signals
     .csr_mstatus_mie_i(csr_mstatus_mie_i),
@@ -747,6 +755,69 @@ module ibex_id_stage #(
   // designs ensures that this never happens for non-predicted branches.
   `ASSERT(NeverDoubleBranch, branch_set & ~instr_bp_taken_i |=> ~branch_set)
   `ASSERT(NeverDoubleJump, jump_set & ~instr_bp_taken_i |=> ~jump_set)
+
+  /////////////////////////////////////
+  // [uarch] Branch predictor update //
+  /////////////////////////////////////
+
+  // Conditional branches: perf_branch_o marks the first ID/EX cycle of a branch, when
+  // branch_decision_i is valid. The done flag guarantees exactly one training event per branch even
+  // if that cycle were ever repeated (speculative execution in the writeback-stage configuration).
+  logic bp_update_done_q;
+  logic cond_resolve;
+
+  always_ff @(posedge clk_i or negedge rst_ni) begin
+    if (!rst_ni) begin
+      bp_update_done_q <= 1'b0;
+    end else begin
+      bp_update_done_q <= (bp_update_done_q | cond_resolve) & ~instr_valid_clear_o;
+    end
+  end
+
+  assign cond_resolve        = perf_branch_o & ~bp_update_done_q;
+  assign bp_cond_upd_o.valid = cond_resolve;
+  assign bp_cond_upd_o.taken = branch_decision_i;
+  assign bp_cond_upd_o.meta  = instr_bp_meta_i;
+
+  // Jumps: jump_set pulses in the first ID/EX cycle of JAL/JALR/FENCE.I, when the ALU (or branch
+  // target ALU) produces the target. Classify calls and returns with the RISC-V link-register hints
+  // (x1/x5) on the decompressed instruction.
+  logic       instr_is_jal, instr_is_jalr, rd_link, rs1_link, jump_exec, jump_pop;
+  logic [4:0] jump_rd, jump_rs1;
+  logic       jump_mispredict;
+
+  assign instr_is_jal  = instr_rdata_i[6:0] == ibex_pkg::OPCODE_JAL;
+  assign instr_is_jalr = instr_rdata_i[6:0] == ibex_pkg::OPCODE_JALR;
+  assign jump_rd       = instr_rdata_i[11:7];
+  assign jump_rs1      = instr_rdata_i[19:15];
+  assign rd_link       = (jump_rd  == 5'd1) || (jump_rd  == 5'd5);
+  assign rs1_link      = (jump_rs1 == 5'd1) || (jump_rs1 == 5'd5);
+  assign jump_exec     = jump_set & (instr_is_jal | instr_is_jalr);
+
+  assign bp_jump_upd_o.valid    = jump_exec;
+  assign bp_jump_upd_o.push     = rd_link;
+  assign jump_pop               = instr_is_jalr & rs1_link & ~(rd_link & (jump_rd == jump_rs1));
+  assign bp_jump_upd_o.pop      = jump_pop;
+  assign bp_jump_upd_o.indirect = instr_is_jalr & ~jump_pop;
+  assign bp_jump_upd_o.pc       = pc_id_i;
+  assign bp_jump_upd_o.link     = pc_id_i + (instr_is_compressed_i ? 32'd2 : 32'd4);
+  assign bp_jump_upd_o.target   = {branch_target_ex_i[31:1], 1'b0};
+
+  // A jump predicted taken in IF went to the predicted target; if that differs from the real one
+  // (only possible for RAS/BTB predictions) the controller redirects fetch like an unpredicted jump.
+  assign jump_mispredict = BranchPredictor & jump_exec & instr_bp_taken_i &
+                           (branch_target_ex_i[31:1] != instr_bp_meta_i.target[31:1]);
+
+  // Performance events. Without a predictor instr_bp_taken_i is 0, so every taken branch counts as
+  // a direction mispredict (the implicit "always not-taken" prediction).
+  assign bp_perf_o.br_mispred   = cond_resolve & (branch_decision_i ^ instr_bp_taken_i);
+  assign bp_perf_o.br_mispred_t = cond_resolve & instr_bp_taken_i & ~branch_decision_i;
+  assign bp_perf_o.jalr         = jump_exec & instr_is_jalr;
+  assign bp_perf_o.ras_pred     = jump_exec & instr_is_jalr & instr_bp_taken_i &
+                                  instr_bp_meta_i.src_ras;
+  assign bp_perf_o.btb_pred     = jump_exec & instr_is_jalr & instr_bp_taken_i &
+                                  instr_bp_meta_i.src_btb;
+  assign bp_perf_o.jalr_mispred = jump_mispredict;
 
   //////////////////////////////
   // Branch not-taken address //

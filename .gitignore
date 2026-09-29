@@ -1,0 +1,25 @@
+# Build products (simulators, software images, logs, regression runs)
+build/
+
+# Local toolchain installed by scripts/setup_tools.sh
+.tools/
+
+# Simulation artefacts written into the working directory
+*.vcd
+*.fst
+waves.*
+trace_core_*.log
+coverage.dat
+
+# Python
+__pycache__/
+*.pyc
+
+# Editor / OS
+.vscode/
+*.swp
+.DS_Store
+
+# Personal project notes for Claude Code / interview prep (kept local)
+CLAUDE.md
+Claude.md

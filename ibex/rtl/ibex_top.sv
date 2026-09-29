@@ -31,6 +31,12 @@ module ibex_top import ibex_pkg::*; #(
   parameter bit                     ICache                       = 1'b0,
   parameter bit                     ICacheECC                    = 1'b0,
   parameter bit                     BranchPredictor              = 1'b0,
+  // [uarch] branch prediction configuration (effective when BranchPredictor = 1)
+  parameter ibex_uarch_pkg::bp_mode_e BpMode                     = ibex_uarch_pkg::BpStatic,
+  parameter int unsigned            BpPhtEntries                 = 512,
+  parameter int unsigned            BpGhrBits                    = 8,
+  parameter int unsigned            BpRasDepth                   = 0,
+  parameter int unsigned            BpBtbEntries                 = 0,
   parameter bit                     DbgTriggerEn                 = 1'b0,
   parameter int unsigned            DbgHwBreakNum                = 1,
   parameter bit                     SecureIbex                   = 1'b0,
@@ -182,7 +188,11 @@ module ibex_top import ibex_pkg::*; #(
 
   // Shadow core instruction interface outputs
   output logic                                                        instr_req_shadow_o,
-  output logic [31:0]                                                 instr_addr_shadow_o
+  output logic [31:0]                                                 instr_addr_shadow_o,
+
+  // [uarch] micro-architecture extension interface
+  output logic                                                        fencei_o,
+  input  logic [ibex_uarch_pkg::HPM_EXT_EVENTS-1:0]                   hpm_ext_event_i
 );
 
   localparam bit          Lockstep              = SecureIbex;
@@ -338,6 +348,11 @@ module ibex_top import ibex_pkg::*; #(
     .TagSizeECC           (TagSizeECC),
     .LineSizeECC          (LineSizeECC),
     .BranchPredictor      (BranchPredictor),
+    .BpMode               (BpMode),
+    .BpPhtEntries         (BpPhtEntries),
+    .BpGhrBits            (BpGhrBits),
+    .BpRasDepth           (BpRasDepth),
+    .BpBtbEntries         (BpBtbEntries),
     .DbgTriggerEn         (DbgTriggerEn),
     .DbgHwBreakNum        (DbgHwBreakNum),
     .WritebackStage       (WritebackStage),
@@ -460,7 +475,10 @@ module ibex_top import ibex_pkg::*; #(
     .alert_minor_o         (core_alert_minor),
     .alert_major_internal_o(core_alert_major_internal),
     .alert_major_bus_o     (core_alert_major_bus),
-    .core_busy_o           (core_busy_d)
+    .core_busy_o           (core_busy_d),
+
+    .fencei_o              (fencei_o),
+    .hpm_ext_event_i       (hpm_ext_event_i)
   );
 
   /////////////////////////////////
@@ -1023,6 +1041,11 @@ module ibex_top import ibex_pkg::*; #(
       .TagSizeECC           (TagSizeECC),
       .LineSizeECC          (LineSizeECC),
       .BranchPredictor      (BranchPredictor),
+      .BpMode               (BpMode),
+      .BpPhtEntries         (BpPhtEntries),
+      .BpGhrBits            (BpGhrBits),
+      .BpRasDepth           (BpRasDepth),
+      .BpBtbEntries         (BpBtbEntries),
       .DbgTriggerEn         (DbgTriggerEn),
       .DbgHwBreakNum        (DbgHwBreakNum),
       .WritebackStage       (WritebackStage),
@@ -1048,6 +1071,7 @@ module ibex_top import ibex_pkg::*; #(
       .rst_ni                   (rst_ni),
 
       .hart_id_i                (hart_id_local),
+      .hpm_ext_event_i          (hpm_ext_event_i),
       .boot_addr_i              (boot_addr_local),
 
       .instr_req_i              (instr_req_local),

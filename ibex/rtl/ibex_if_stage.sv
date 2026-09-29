@@ -29,6 +29,12 @@ module ibex_if_stage import ibex_pkg::*; #(
   parameter lfsr_seed_t  RndCnstLfsrSeed      = RndCnstLfsrSeedDefault,
   parameter lfsr_perm_t  RndCnstLfsrPerm      = RndCnstLfsrPermDefault,
   parameter bit          BranchPredictor      = 1'b0,
+  // [uarch] branch prediction configuration (used when BranchPredictor = 1)
+  parameter ibex_uarch_pkg::bp_mode_e BpMode   = ibex_uarch_pkg::BpStatic,
+  parameter int unsigned BpPhtEntries         = 512,
+  parameter int unsigned BpGhrBits            = 8,
+  parameter int unsigned BpRasDepth           = 0,
+  parameter int unsigned BpBtbEntries         = 0,
   parameter bit          MemECC               = 1'b0,
   parameter int unsigned MemDataWidth         = MemECC ? 32 + 7 : 32
 ) (
@@ -79,6 +85,11 @@ module ibex_if_stage import ibex_pkg::*; #(
                                                                 // getting expanded
   output logic                        instr_bp_taken_o,         // instruction was predicted to be
                                                                 // a taken branch
+  // [uarch] branch-predictor metadata and training interface
+  output ibex_uarch_pkg::bp_meta_t     instr_bp_meta_o,         // prediction metadata of the
+                                                                // instruction in ID
+  input  ibex_uarch_pkg::bp_cond_upd_t bp_cond_upd_i,           // conditional branch resolved
+  input  ibex_uarch_pkg::bp_jump_upd_t bp_jump_upd_i,           // JAL/JALR executed
   output logic                        instr_fetch_err_o,        // bus error on fetch
   output logic                        instr_fetch_err_plus2_o,  // bus error misaligned
   output logic                        illegal_c_insn_id_o,      // compressed decoder thinks this
@@ -175,6 +186,7 @@ module ibex_if_stage import ibex_pkg::*; #(
 
   logic              predict_branch_taken;
   logic       [31:0] predict_branch_pc;
+  ibex_uarch_pkg::bp_meta_t predict_branch_meta; // [uarch]
 
   logic        [4:0] irq_vec;
 
@@ -599,6 +611,9 @@ module ibex_if_stage import ibex_pkg::*; #(
     logic        instr_skid_valid_q, instr_skid_valid_d;
     logic        instr_skid_en;
     logic        instr_bp_taken_q, instr_bp_taken_d;
+    // [uarch] prediction metadata travelling with the instruction (skid buffer, IF/ID register)
+    ibex_uarch_pkg::bp_meta_t instr_skid_bp_meta_q;
+    ibex_uarch_pkg::bp_meta_t instr_bp_meta_q, instr_bp_meta_d;
 
     logic        predict_branch_taken_raw;
 
@@ -607,14 +622,17 @@ module ibex_if_stage import ibex_pkg::*; #(
       always_ff @(posedge clk_i or negedge rst_ni) begin
         if (!rst_ni) begin
           instr_bp_taken_q <= '0;
+          instr_bp_meta_q  <= '0;
         end else if (if_id_pipe_reg_we) begin
           instr_bp_taken_q <= instr_bp_taken_d;
+          instr_bp_meta_q  <= instr_bp_meta_d;
         end
       end
     end else begin : g_bp_taken_nr
       always_ff @(posedge clk_i) begin
         if (if_id_pipe_reg_we) begin
           instr_bp_taken_q <= instr_bp_taken_d;
+          instr_bp_meta_q  <= instr_bp_meta_d;
         end
       end
     end
@@ -646,10 +664,12 @@ module ibex_if_stage import ibex_pkg::*; #(
           instr_skid_bp_taken_q <= '0;
           instr_skid_data_q     <= '0;
           instr_skid_addr_q     <= '0;
+          instr_skid_bp_meta_q  <= '0;
         end else if (instr_skid_en) begin
           instr_skid_bp_taken_q <= predict_branch_taken;
           instr_skid_data_q     <= fetch_rdata;
           instr_skid_addr_q     <= fetch_addr;
+          instr_skid_bp_meta_q  <= predict_branch_meta;
         end
       end
     end else begin : g_instr_skid_nr
@@ -658,11 +678,21 @@ module ibex_if_stage import ibex_pkg::*; #(
           instr_skid_bp_taken_q <= predict_branch_taken;
           instr_skid_data_q     <= fetch_rdata;
           instr_skid_addr_q     <= fetch_addr;
+          instr_skid_bp_meta_q  <= predict_branch_meta;
         end
       end
     end
 
-    ibex_branch_predict branch_predict_i (
+    // [uarch] The upstream static predictor (ibex_branch_predict) is replaced by a configurable
+    // predictor (direction table, return address stack, indirect-jump BTB). BpMode = BpStatic with
+    // BpRasDepth = BpBtbEntries = 0 reproduces the upstream behaviour exactly.
+    ibex_bp_dynamic #(
+      .Mode      (BpMode == ibex_uarch_pkg::BpNone ? ibex_uarch_pkg::BpStatic : BpMode),
+      .PhtEntries(BpPhtEntries),
+      .GhrBits   (BpGhrBits),
+      .RasDepth  (BpRasDepth),
+      .BtbEntries(BpBtbEntries)
+    ) branch_predict_i (
       .clk_i        (clk_i),
       .rst_ni       (rst_ni),
       .fetch_rdata_i(fetch_rdata),
@@ -670,7 +700,16 @@ module ibex_if_stage import ibex_pkg::*; #(
       .fetch_valid_i(fetch_valid),
 
       .predict_branch_taken_o(predict_branch_taken_raw),
-      .predict_branch_pc_o   (predict_branch_pc)
+      .predict_branch_pc_o   (predict_branch_pc),
+      .predict_meta_o        (predict_branch_meta),
+
+      // instruction entering ID (the IF/ID register write); faulting fetches never execute
+      .id_entry_valid_i(if_id_pipe_reg_we & ~instr_err_out),
+      .id_entry_rdata_i(if_instr_rdata),
+      .id_entry_pc_i   (if_instr_addr),
+
+      .cond_upd_i(bp_cond_upd_i),
+      .jump_upd_i(bp_jump_upd_i)
     );
 
     // If there is an instruction in the skid buffer there must be no branch prediction.
@@ -687,11 +726,13 @@ module ibex_if_stage import ibex_pkg::*; #(
     // skid buffer.
     assign if_instr_bus_err = ~instr_skid_valid_q & fetch_err;
     assign instr_bp_taken_d = instr_skid_valid_q ? instr_skid_bp_taken_q : predict_branch_taken;
+    assign instr_bp_meta_d  = instr_skid_valid_q ? instr_skid_bp_meta_q  : predict_branch_meta;
 
     assign fetch_ready = id_in_ready_i & ~stall_dummy_instr &
                          !(instr_gets_expanded == INSTR_EXPANDED) & ~instr_skid_valid_q;
 
     assign instr_bp_taken_o = instr_bp_taken_q;
+    assign instr_bp_meta_o  = instr_bp_meta_q;
 
     `ASSERT(NoPredictSkid, instr_skid_valid_q |-> ~predict_branch_taken)
     `ASSERT(NoPredictIllegal, predict_branch_taken |-> ~illegal_c_insn)
@@ -699,6 +740,13 @@ module ibex_if_stage import ibex_pkg::*; #(
     assign instr_bp_taken_o     = 1'b0;
     assign predict_branch_taken = 1'b0;
     assign predict_branch_pc    = 32'b0;
+    assign predict_branch_meta  = '0;
+    assign instr_bp_meta_o      = '0;
+
+    ibex_uarch_pkg::bp_cond_upd_t unused_bp_cond_upd;
+    ibex_uarch_pkg::bp_jump_upd_t unused_bp_jump_upd;
+    assign unused_bp_cond_upd = bp_cond_upd_i;
+    assign unused_bp_jump_upd = bp_jump_upd_i;
 
     assign if_instr_valid = fetch_valid;
     assign if_instr_rdata = fetch_rdata;

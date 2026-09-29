@@ -70,6 +70,7 @@ module ibex_controller #(
                                                          // taken)
   input  logic                  branch_not_set_i,        // branch is definitely not taken
   input  logic                  jump_set_i,              // jump taken set signal
+  input  logic                  jump_mispredict_i,       // [uarch] predicted jump target wrong
 
   // interrupt signals
   input  logic                  csr_mstatus_mie_i,       // M-mode interrupt enable bit
@@ -592,8 +593,10 @@ module ibex_controller #(
         end
 
         if (branch_set_i || jump_set_i) begin
-          // Only set the PC if the branch predictor hasn't already done the branch for us
-          pc_set_o       = BranchPredictor ? ~instr_bp_taken_i : 1'b1;
+          // Only set the PC if the branch predictor hasn't already done the branch for us.
+          // [uarch] ...or if it did, but to the wrong target (register-indirect jump predicted by
+          // the RAS/BTB): redirect to the target computed in ID/EX.
+          pc_set_o       = BranchPredictor ? (~instr_bp_taken_i | jump_mispredict_i) : 1'b1;
 
           perf_tbranch_o = branch_set_i;
           perf_jump_o    = jump_set_i;

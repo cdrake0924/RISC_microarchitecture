@@ -330,7 +330,11 @@ module ibex_top_tracing import ibex_pkg::*; #(
     .data_wdata_intg_shadow_o,
 
     .instr_req_shadow_o,
-    .instr_addr_shadow_o
+    .instr_addr_shadow_o,
+
+    // [uarch] no external caches in the upstream tracing wrapper
+    .fencei_o        (),
+    .hpm_ext_event_i ('0)
   );
 
   ibex_tracer

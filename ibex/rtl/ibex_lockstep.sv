@@ -31,6 +31,11 @@ module ibex_lockstep import ibex_pkg::*; #(
   parameter int unsigned            TagSizeECC                  = IC_TAG_SIZE,
   parameter int unsigned            LineSizeECC                 = IC_LINE_SIZE,
   parameter bit                     BranchPredictor             = 1'b0,
+  parameter ibex_uarch_pkg::bp_mode_e BpMode                    = ibex_uarch_pkg::BpStatic,
+  parameter int unsigned            BpPhtEntries                = 512,
+  parameter int unsigned            BpGhrBits                   = 8,
+  parameter int unsigned            BpRasDepth                  = 0,
+  parameter int unsigned            BpBtbEntries                = 0,
   parameter bit                     DbgTriggerEn                = 1'b0,
   parameter int unsigned            DbgHwBreakNum               = 1,
   parameter bit                     ResetAll                    = 1'b0,
@@ -57,6 +62,7 @@ module ibex_lockstep import ibex_pkg::*; #(
   input  logic                         rst_ni,
 
   input  logic [31:0]                  hart_id_i,
+  input  logic [ibex_uarch_pkg::HPM_EXT_EVENTS-1:0] hpm_ext_event_i, // [uarch]
   input  logic [31:0]                  boot_addr_i,
 
   input  logic                         instr_req_i,
@@ -250,6 +256,7 @@ module ibex_lockstep import ibex_pkg::*; #(
     ibex_mubi_t                  fetch_enable;
     ibex_mubi_t                  mcounteren_writable;
     logic                        ic_scr_key_valid;
+    logic [ibex_uarch_pkg::HPM_EXT_EVENTS-1:0] hpm_ext_event; // [uarch]
   } delayed_inputs_t;
 
   delayed_inputs_t [LockstepOffset-1:0] shadow_inputs_q;
@@ -331,6 +338,7 @@ module ibex_lockstep import ibex_pkg::*; #(
   assign shadow_inputs_in.fetch_enable        = fetch_enable_i;
   assign shadow_inputs_in.mcounteren_writable = mcounteren_writable_i;
   assign shadow_inputs_in.ic_scr_key_valid    = ic_scr_key_valid_i;
+  assign shadow_inputs_in.hpm_ext_event       = hpm_ext_event_i;
 
   ///////////////////
   // Output delays //
@@ -439,6 +447,11 @@ module ibex_lockstep import ibex_pkg::*; #(
     .TagSizeECC           ( TagSizeECC           ),
     .LineSizeECC          ( LineSizeECC          ),
     .BranchPredictor      ( BranchPredictor      ),
+    .BpMode               ( BpMode               ),
+    .BpPhtEntries         ( BpPhtEntries         ),
+    .BpGhrBits            ( BpGhrBits            ),
+    .BpRasDepth           ( BpRasDepth           ),
+    .BpBtbEntries         ( BpBtbEntries         ),
     .DbgTriggerEn         ( DbgTriggerEn         ),
     .DbgHwBreakNum        ( DbgHwBreakNum        ),
     .WritebackStage       ( WritebackStage       ),
@@ -561,7 +574,12 @@ module ibex_lockstep import ibex_pkg::*; #(
     .alert_minor_o          (shadow_alert_minor),
     .alert_major_internal_o (shadow_alert_major_internal),
     .alert_major_bus_o      (shadow_alert_major_bus),
-    .core_busy_o            (shadow_outputs_d.core_busy)
+    .core_busy_o            (shadow_outputs_d.core_busy),
+
+    // [uarch] The shadow core sees the same (delayed) external events so its HPM counters match.
+    // FENCE.I side effects are driven by the main core only.
+    .fencei_o               (),
+    .hpm_ext_event_i        (shadow_inputs_q[0].hpm_ext_event)
   );
 
   // Register the shadow core outputs

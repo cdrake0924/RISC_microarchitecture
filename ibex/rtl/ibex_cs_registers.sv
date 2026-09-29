@@ -126,7 +126,11 @@ module ibex_cs_registers import ibex_pkg::*; #(
   input  logic                 mem_store_i,                 // store to memory in this cycle
   input  logic                 dside_wait_i,                // core waiting for the dside
   input  logic                 mul_wait_i,                  // core waiting for multiply
-  input  logic                 div_wait_i                   // core waiting for divide
+  input  logic                 div_wait_i,                  // core waiting for divide
+  // [uarch] extended performance events
+  input  ibex_uarch_pkg::bp_perf_t bp_perf_i,               // branch prediction events
+  input  logic [ibex_uarch_pkg::HPM_EXT_EVENTS-1:0] ext_event_i // events from outside the core
+                                                            // (L1 caches), see ibex_uarch_pkg
 );
 
   // Is a PMP config a locked one that allows M-mode execution when MSECCFG.MML is set (either
@@ -1351,6 +1355,15 @@ module ibex_cs_registers import ibex_pkg::*; #(
     mhpmcounter_incr[10] = instr_ret_compressed_i; // num of compressed instr
     mhpmcounter_incr[11] = mul_wait_i;             // cycles waiting for multiply
     mhpmcounter_incr[12] = div_wait_i;             // cycles waiting for divide
+    // [uarch] 13..18: branch prediction events (bp_perf_t fields, first field first)
+    for (int unsigned i = 0; i < ibex_uarch_pkg::HPM_BP_EVENTS; i++) begin
+      mhpmcounter_incr[ibex_uarch_pkg::HPM_IDX_BP_BASE + i] =
+          bp_perf_i[ibex_uarch_pkg::HPM_BP_EVENTS - 1 - i];
+    end
+    // [uarch] 19..26: L1 cache / prefetcher events (hpm_ext_event_e order)
+    for (int unsigned i = 0; i < ibex_uarch_pkg::HPM_EXT_EVENTS; i++) begin
+      mhpmcounter_incr[ibex_uarch_pkg::HPM_IDX_EXT_BASE + i] = ext_event_i[i];
+    end
   end
 
   // event selector (hardwired, 0 means no event)

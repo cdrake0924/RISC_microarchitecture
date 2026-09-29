@@ -35,6 +35,12 @@ module ibex_core import ibex_pkg::*; #(
   parameter int unsigned            TagSizeECC                  = IC_TAG_SIZE,
   parameter int unsigned            LineSizeECC                 = IC_LINE_SIZE,
   parameter bit                     BranchPredictor             = 1'b0,
+  // [uarch] branch prediction configuration
+  parameter ibex_uarch_pkg::bp_mode_e BpMode                    = ibex_uarch_pkg::BpStatic,
+  parameter int unsigned            BpPhtEntries                = 512,
+  parameter int unsigned            BpGhrBits                   = 8,
+  parameter int unsigned            BpRasDepth                  = 0,
+  parameter int unsigned            BpBtbEntries                = 0,
   parameter bit                     DbgTriggerEn                = 1'b0,
   parameter int unsigned            DbgHwBreakNum               = 1,
   parameter bit                     ResetAll                    = 1'b0,
@@ -172,7 +178,13 @@ module ibex_core import ibex_pkg::*; #(
   output logic                         alert_minor_o,
   output logic                         alert_major_internal_o,
   output logic                         alert_major_bus_o,
-  output ibex_mubi_t                   core_busy_o
+  output ibex_mubi_t                   core_busy_o,
+
+  // [uarch] micro-architecture extension interface
+  output logic                         fencei_o,          // FENCE.I executed (pulse): external
+                                                          // caches must make stores visible to
+                                                          // instruction fetch
+  input  logic [ibex_uarch_pkg::HPM_EXT_EVENTS-1:0] hpm_ext_event_i // external HPM events
 );
 
   localparam int unsigned PMPNumChan      = 3;
@@ -194,6 +206,11 @@ module ibex_core import ibex_pkg::*; #(
   logic [15:0] instr_expanded_id;
   logic        instr_perf_count_id;
   logic        instr_bp_taken_id;
+  // [uarch] branch predictor metadata / training and performance events
+  ibex_uarch_pkg::bp_meta_t     instr_bp_meta_id;
+  ibex_uarch_pkg::bp_cond_upd_t bp_cond_upd;
+  ibex_uarch_pkg::bp_jump_upd_t bp_jump_upd;
+  ibex_uarch_pkg::bp_perf_t     bp_perf;
   logic        instr_fetch_err;                // Bus error on instr fetch
   logic        instr_fetch_err_plus2;          // Instruction error is misaligned
   logic        illegal_c_insn_id;              // Illegal compressed instruction sent to ID stage
@@ -442,6 +459,11 @@ module ibex_core import ibex_pkg::*; #(
     .RndCnstLfsrSeed      (RndCnstLfsrSeed),
     .RndCnstLfsrPerm      (RndCnstLfsrPerm),
     .BranchPredictor      (BranchPredictor),
+    .BpMode               (BpMode),
+    .BpPhtEntries         (BpPhtEntries),
+    .BpGhrBits            (BpGhrBits),
+    .BpRasDepth           (BpRasDepth),
+    .BpBtbEntries         (BpBtbEntries),
     .MemECC               (MemECC),
     .MemDataWidth         (MemDataWidth)
   ) if_stage_i (
@@ -483,6 +505,9 @@ module ibex_core import ibex_pkg::*; #(
     .instr_gets_expanded_id_o(instr_gets_expanded_id),
     .instr_expanded_id_o     (instr_expanded_id),
     .instr_bp_taken_o        (instr_bp_taken_id),
+    .instr_bp_meta_o         (instr_bp_meta_id),
+    .bp_cond_upd_i           (bp_cond_upd),
+    .bp_jump_upd_i           (bp_jump_upd),
     .instr_fetch_err_o       (instr_fetch_err),
     .instr_fetch_err_plus2_o (instr_fetch_err_plus2),
     .illegal_c_insn_id_o     (illegal_c_insn_id),
@@ -578,9 +603,11 @@ module ibex_core import ibex_pkg::*; #(
     .instr_rdata_c_i      (instr_rdata_c_id),
     .instr_is_compressed_i(instr_is_compressed_id),
     .instr_bp_taken_i     (instr_bp_taken_id),
+    .instr_bp_meta_i      (instr_bp_meta_id),
 
     // Jumps and branches
     .branch_decision_i(branch_decision),
+    .branch_target_ex_i(branch_target_ex),
 
     // IF and ID control signals
     .instr_first_cycle_id_o(instr_first_cycle_id),
@@ -715,7 +742,11 @@ module ibex_core import ibex_pkg::*; #(
     .perf_dside_wait_o(perf_dside_wait),
     .perf_mul_wait_o  (perf_mul_wait),
     .perf_div_wait_o  (perf_div_wait),
-    .instr_id_done_o  (instr_id_done)
+    .instr_id_done_o  (instr_id_done),
+
+    .bp_cond_upd_o    (bp_cond_upd),
+    .bp_jump_upd_o    (bp_jump_upd),
+    .bp_perf_o        (bp_perf)
   );
 
   // for RVFI only
@@ -1163,8 +1194,14 @@ module ibex_core import ibex_pkg::*; #(
     .mem_store_i                (perf_store),
     .dside_wait_i               (perf_dside_wait),
     .mul_wait_i                 (perf_mul_wait),
-    .div_wait_i                 (perf_div_wait)
+    .div_wait_i                 (perf_div_wait),
+    .bp_perf_i                  (bp_perf),
+    .ext_event_i                (hpm_ext_event_i)
   );
+
+  // [uarch] FENCE.I is signalled to the external L1 caches (see ibex_cc_top). Upstream Ibex uses
+  // the same pulse to invalidate its optional internal instruction cache.
+  assign fencei_o = icache_inval;
 
   // These assertions are in top-level as instr_valid_id required as the enable term
   `ASSERT(IbexCsrOpValid, instr_valid_id |-> csr_op inside {
