@@ -24,10 +24,12 @@ JOBS     ?= 4
 # I-cache with next-line prefetcher, 2 KiB 2-way write-back D-cache.
 # BP_MODE: 0 none, 1 static BTFN, 2 1-bit, 3 bimodal, 4 gshare, 5 tournament
 # *_REPL : 0 PLRU, 1 random, 2 FIFO        DC_WT: 0 write-back, 1 write-through
+# The first five match scripts/uarch_configs.py (the regression ladder); onebit..wt are the full
+# configuration with one feature changed.
 CFG_baseline   := -GBP_MODE=0 -GIC_EN=0 -GDC_EN=0
+CFG_static     := -GBP_MODE=1 -GBP_RAS=0 -GBP_BTB=0 -GIC_EN=0 -GDC_EN=0
 CFG_bp_only    := -GIC_EN=0 -GDC_EN=0
 CFG_caches     := -GBP_MODE=0
-CFG_static     := -GBP_MODE=1 -GBP_RAS=0 -GBP_BTB=0
 CFG_onebit     := -GBP_MODE=2
 CFG_bimodal    := -GBP_MODE=3
 CFG_gshare     := -GBP_MODE=4
@@ -51,7 +53,13 @@ DV_FILES := \
 RTL_DEPS := $(shell sed -n 's#^\([a-z].*\.sv\)$$#$(REPO)/\1#p' $(REPO)/rtl/rtl_files.f) \
             $(wildcard $(REPO)/rtl/include/*.svh)
 
-VERILATOR_FLAGS := --binary --timing --assert -j $(JOBS) \
+# C++ build of the generated model: -O2 instead of Verilator's default -Os (faster simulation, and
+# the -Os runtime fails to link with MSYS2's GCC 16 on Windows), and one object file per generated
+# source so small models also compile in parallel.
+VL_MAKEFLAGS := -MAKEFLAGS OPT_FAST=-O2 -MAKEFLAGS OPT_SLOW=-O1 -MAKEFLAGS OPT_GLOBAL=-O2 \
+                -MAKEFLAGS VM_PARALLEL_BUILDS=1
+
+VERILATOR_FLAGS := --binary --timing --assert -j $(JOBS) $(VL_MAKEFLAGS) \
   --top-module tb_top +define+RVFI \
   -Wno-fatal -Wno-lint -Wno-style -Wno-TIMESCALEMOD -Wno-MULTIDRIVEN \
   --x-assign fast --x-initial fast \
@@ -108,7 +116,10 @@ $(UNIT_DIR)/uparams.txt: FORCE
 
 $(UNIT_BIN): $(RTL_DEPS) $(UNIT_SRC) $(REPO)/sim/Makefile $(UNIT_DIR)/uparams.txt
 	@echo "[unit] building $(UNIT) ($(UCONFIG)): $(UPARAMS)"
-	cd $(REPO) && verilator --binary --timing --assert -j $(JOBS) --top-module $(UNIT) 	  -Wno-fatal -Wno-lint -Wno-style -O3 $(UPARAMS) 	  -f rtl/rtl_files.f $(UNIT_SRC) -Mdir $(UNIT_DIR)/obj_dir -o V$(UNIT) 	  > $(UNIT_DIR)/build.log 2>&1 || (tail -40 $(UNIT_DIR)/build.log; exit 1)
+	cd $(REPO) && verilator --binary --timing --assert -j $(JOBS) $(VL_MAKEFLAGS) \
+	  --top-module $(UNIT) -Wno-fatal -Wno-lint -Wno-style -O3 $(UPARAMS) \
+	  -f rtl/rtl_files.f $(UNIT_SRC) -Mdir $(UNIT_DIR)/obj_dir -o V$(UNIT) \
+	  > $(UNIT_DIR)/build.log 2>&1 || (tail -40 $(UNIT_DIR)/build.log; exit 1)
 
 .PHONY: unit unit-build
 unit-build: $(UNIT_BIN)
@@ -119,7 +130,7 @@ unit: unit-build
 lint:
 	cd $(REPO) && verilator --lint-only -Wall --top-module ibex_cc_top +define+RVFI \
 	  -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-PINCONNECTEMPTY -Wno-IMPORTSTAR \
-	  ibex/lint/verilator_waiver.vlt -f rtl/rtl_files.f
+	  ibex/lint/verilator_waiver.vlt sim/verilator_waiver.vlt -f rtl/rtl_files.f
 	@echo "[lint] ibex_cc_top: clean"
 
 clean:

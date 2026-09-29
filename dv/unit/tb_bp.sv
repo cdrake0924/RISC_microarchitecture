@@ -262,7 +262,14 @@ module tb_bp #(
           tb_error("BTB", $sformatf("jump at 0x%08x predicted 0x%08x, last target 0x%08x",
                                     pc, pred_pc, targets[pc]));
       end
-      // execute: update the BTB with the real target (this also evicts aliasing sites)
+      // the call enters ID (RAS push) ...
+      @(negedge clk);
+      idle();
+      entry_valid = 1'b1;
+      entry_rdata = enc_jalr(5'd1, 5'd10);
+      entry_pc    = pc;
+      // ... and executes in the next cycle, as in the pipeline: update the BTB with the real target
+      // (this also evicts aliasing sites). CallRetDecodeConsistent relies on this ordering.
       @(negedge clk);
       idle();
       jump_upd.valid    = 1'b1;
@@ -271,10 +278,6 @@ module tb_bp #(
       jump_upd.pc       = pc;
       jump_upd.link     = pc + 4;
       jump_upd.target   = target;
-      // the RAS push of this call happens at ID entry
-      entry_valid = 1'b1;
-      entry_rdata = enc_jalr(5'd1, 5'd10);
-      entry_pc    = pc;
       // aliasing sites overwrite each other: forget every site that maps to the same entry
       begin
         logic [31:0] victims[$];

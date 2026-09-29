@@ -20,6 +20,6 @@ __pycache__/
 *.swp
 .DS_Store
 
-# Personal project notes for Claude Code / interview prep (kept local)
+# Local notes (not part of the project)
 CLAUDE.md
 Claude.md

@@ -27,7 +27,7 @@ help:
 	@echo "  make eval                      performance evaluation -> results/, docs/figures/"
 	@echo "  make clean"
 	@echo ""
-	@echo "  CONFIG: baseline static bimodal gshare icache caches full  (see sim/Makefile)"
+	@echo "  CONFIG: baseline static bp_only caches full onebit bimodal gshare tournament wt  (see sim/Makefile)"
 	@echo "  TEST  : $$($(MAKE) -s -C sw list 2>/dev/null | tr ' ' '\n' | grep -v rv32 | tr '\n' ' ')"
 
 tools:

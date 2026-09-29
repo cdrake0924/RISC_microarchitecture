@@ -28,6 +28,10 @@ def gparams(params):
     return " ".join(f"-G{k}={v}" for k, v in sorted(params.items()))
 
 
+def size_str(nbytes):
+    return f"{nbytes // 1024}K" if nbytes >= 1024 else f"{nbytes}B"
+
+
 def describe(params):
     p = params
     bp = BP_NAMES[p["BP_MODE"]]
@@ -38,9 +42,9 @@ def describe(params):
             bp += f"+RAS{p['BP_RAS']}"
         if p["BP_BTB"]:
             bp += f"+BTB{p['BP_BTB']}"
-    ic = (f"{max(p['IC_SETS'] * p['IC_WAYS'] * p['IC_LINE'] // 1024, 1)}K {p['IC_WAYS']}w "
+    ic = (f"{size_str(p['IC_SETS'] * p['IC_WAYS'] * p['IC_LINE'])} {p['IC_WAYS']}w "
           f"{p['IC_LINE']}B{' +pf' if p['IC_PF'] else ''}" if p["IC_EN"] else "off")
-    dc = (f"{max(p['DC_SETS'] * p['DC_WAYS'] * p['DC_LINE'] // 1024, 1)}K {p['DC_WAYS']}w "
+    dc = (f"{size_str(p['DC_SETS'] * p['DC_WAYS'] * p['DC_LINE'])} {p['DC_WAYS']}w "
           f"{p['DC_LINE']}B {'WT' if p['DC_WT'] else 'WB'}" if p["DC_EN"] else "off")
     return f"bp={bp} I$={ic} D$={dc}"
 

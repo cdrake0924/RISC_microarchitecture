@@ -35,13 +35,14 @@ int main(void) {
   uint32_t dc = TB_CFG_DCACHE_EN(cfg);
   uint32_t ras = TB_CFG_RAS_EN(cfg);
   uint32_t btb = TB_CFG_BTB_EN(cfg);
+  uint32_t wt = TB_CFG_DC_WT(cfg);  // write-through D-cache: never dirty, never writes back
   uint32_t line = TB_CFG_DC_LINE(cfg);
   uint32_t stride = line > 64 ? line : 64;
   perf_counters_t p;
   uint64_t g;
 
-  tb_printf("HPM test: bp_mode=%u ras=%u btb=%u icache=%u dcache=%u dcache_line=%u\n", bp, ras,
-            btb, ic, dc, line);
+  tb_printf("HPM test: bp_mode=%u ras=%u btb=%u icache=%u dcache=%u dcache_wt=%u dcache_line=%u\n",
+            bp, ras, btb, ic, dc, wt, line);
 
   // ---- 1. Branches: countdown loop, exactly 1000 conditional branches, 999 taken ----
   perf_start();
@@ -94,6 +95,7 @@ int main(void) {
   EXPECT("D-cache write-backs", g = p.hpm[HPM_DC_WRITEBACK], g == 0);
 
   // ---- 3. Stores to 16 distinct lines, then FENCE.I cleans exactly those 16 dirty lines ----
+  // (write-through: the stores already went to memory, so there is nothing to write back)
   __asm__ volatile("fence.i" ::: "memory");  // start with a clean D-cache
   perf_start();
   __asm__ volatile(
@@ -115,7 +117,7 @@ int main(void) {
   // operand inside the region, so compare against loads + stores rather than a constant).
   EXPECT("D-cache accesses", g = p.hpm[HPM_DC_ACCESS],
          dc ? g == p.hpm[HPM_LOADS] + p.hpm[HPM_STORES] : g == 0);
-  EXPECT("D-cache write-backs", g = p.hpm[HPM_DC_WRITEBACK], dc ? g == 16 : g == 0);
+  EXPECT("D-cache write-backs", g = p.hpm[HPM_DC_WRITEBACK], (dc && !wt) ? g == 16 : g == 0);
 
   // ---- 4. Uncached (MMIO) accesses and jumps ----
   perf_start();

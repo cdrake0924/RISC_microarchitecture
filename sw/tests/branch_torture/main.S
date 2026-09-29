@@ -115,7 +115,7 @@ tests:
 11:
   PASS  7
 
-  # 7. Jump to jump, call/return, indirect jumps (JALR is not predicted)
+  # 7. Jump to jump, call/return, indirect jumps (returns use the RAS, other JALRs the BTB)
   j     12f
   POISON
 12:

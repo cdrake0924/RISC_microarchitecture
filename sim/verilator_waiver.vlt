@@ -1,0 +1,19 @@
+// Copyright 2026 RISC_microarchitecture contributors.
+// Licensed under the Apache License, Version 2.0, see LICENSE for details.
+// SPDX-License-Identifier: Apache-2.0
+//
+// Lint waivers for `make lint` (used in addition to ibex/lint/verilator_waiver.vlt).
+// Every waiver is scoped to one rule and one file, with the reason.
+
+`verilator_config
+
+// Upstream Ibex, unmodified logic: Verilator 5.03x and newer report false combinational loops
+// through the controller <-> ID-stage handshake (different bits of the same signals). Version 5.020
+// does not. This is a simulation-scheduling (performance) warning, not a real loop: the same
+// warnings appear when linting the original upstream ibex_top.
+lint_off -rule UNOPTFLAT -file "*ibex_controller.sv"
+lint_off -rule UNOPTFLAT -file "*ibex_id_stage.sv"
+
+// The SVA macros in rtl/include/uarch_assert.svh use `disable iff (!rst_ni)`, which samples the
+// asynchronous reset synchronously. This only affects assertion code, never the design.
+lint_off -rule SYNCASYNCNET -file "*ibex_cc_top.sv" -match "*rst_ni*"
