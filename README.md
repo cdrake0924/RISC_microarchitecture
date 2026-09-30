@@ -6,9 +6,9 @@ data caches**, and **hardware performance counters** to measure both. The verifi
 environment is adapted from OpenHW's **CV32E40P** testbench, and the performance impact is
 measured on real workloads using the core's own counters.
 
-On a system with 10-cycle main memory, the extended core runs the benchmark suite **2.98× faster**
-than stock Ibex (geomean IPC 0.153 → 0.458). The full regression of @@REGRESS_SIMS@@ simulations
-passes with every checker and assertion enabled.
+On a system with 10-cycle main memory, the extended core runs the benchmark suite **3.06× faster**
+than stock Ibex (geomean IPC 0.150 → 0.457). The full regression of 776 simulations passes with
+every checker and assertion enabled.
 
 ![Speedup of each feature over baseline Ibex](docs/figures/ladder_speedup.png)
 
@@ -33,25 +33,34 @@ Geomean over 11 workloads, 10-cycle memory, 2 KiB 2-way caches with 16 B lines
 
 | Configuration | CPI | IPC | Speedup |
 |---|---|---|---|
-| Baseline Ibex | 6.52 | 0.153 | 1.00× |
-| + branch prediction only | 5.92 | 0.169 | 1.10× |
-| + I-cache | 3.58 | 0.279 | 1.82× |
-| + I-cache + D-cache | 2.28 | 0.439 | 2.86× |
-| + prefetcher + branch prediction (full) | 2.19 | 0.458 | **2.98×** |
+| Baseline Ibex | 6.69 | 0.150 | 1.00× |
+| + branch prediction only | 6.05 | 0.165 | 1.10× |
+| + I-cache | 3.57 | 0.280 | 1.87× |
+| + I-cache + D-cache | 2.31 | 0.433 | 2.89× |
+| + prefetcher | 2.31 | 0.433 | 2.89× |
+| + branch prediction (full) | **2.19** | **0.457** | **3.06×** |
 
 A few findings that were not obvious before measuring:
 
-* **Memory latency, not branches, limits Ibex.** Baseline Ibex spends 45% of its cycles waiting
-  for instruction fetch and 37% waiting for data. The caches are worth 2.9×. Branch prediction
-  is worth 1.10× on its own and another 4% on top of the caches.
+* **Memory latency, not branches, limits Ibex.** Baseline Ibex spends 47% of its cycles waiting
+  for instruction fetch and 36% waiting for data. The caches are worth 2.89×. Branch prediction
+  is worth 1.10× on its own and another 5.5% on top of the caches. Stock Ibex's CPI grows by
+  0.58 per cycle of memory latency; the full core's grows by 0.036.
 * **Better predictors barely change CPI on a 2-stage pipeline.** Going from static to tournament
-  prediction raises mean accuracy from 87.8% to 93.8% and cuts mispredictions from 21.4 to 13.2
-  per 1000 instructions. But each avoided mispredict only saves about 1.4 cycles here, so CPI
-  improves by less than 1%. Most of the gain comes from predicting taken branches *at all*.
+  prediction raises mean accuracy from 86.4% to 92.7% and cuts mispredictions from 23.7 to 14.8
+  per 1000 instructions. But with an I-cache each avoided mispredict saves only about 1.1 cycles,
+  so CPI improves by 0.6%. Most of the gain comes from predicting taken branches *at all*.
+  Correct return predictions save nothing at all when the target hits in the I-cache: Ibex's
+  2-cycle jumps already hide the redirect.
 * **A cache can make things slower.** `stream` runs 37% slower with the 2-way D-cache than
   without: its three arrays map to the same sets and thrash two ways (70% miss rate). At 4 ways
-  the miss rate falls to the ideal 25%. `bsearch` (83% misses) is below the 40% hit rate at which
-  a cache breaks even with this memory.
+  the miss rate falls to the ideal 25% and `stream` runs 2.6× faster. `bsearch` (83% misses) is
+  below the 40% hit rate at which a cache breaks even with this memory. With 1-cycle memory the
+  caches cost 12%.
+* **History timing matters.** On `crc32` gshare is perfect while the tournament predictor is stuck
+  at 88.9%. The history is updated when a branch resolves, so the index a branch sees depends on
+  whether the branch before it was mispredicted. The tournament predictor settles into the state
+  where two branches collide in the gshare table.
 
 ![Branch direction accuracy by predictor](docs/figures/bp_accuracy.png)
 
@@ -89,7 +98,10 @@ A test passes only if the program reports success **and** none of these fired:
 * `obi_checker` checks the bus protocol on both sides of both caches.
 * 32 SVA properties inside the RTL.
 
-@@REGRESS_SUMMARY@@
+The latest full regression runs **776 simulations: all pass**. That is 735 system-level runs over
+10 configurations (ISA tests, directed tests, all benchmarks, and stress runs with random bus
+stalls) plus 41 constrained-random block-level runs over 14 cache and predictor configurations.
+All **100/100 functional-coverage bins** are hit.
 
 Details: [docs/verification.md](docs/verification.md).
 
@@ -145,6 +157,9 @@ docs/           design notes, verification, evaluation, figures
   remaining cost for `linked_list`, `stream` and `sieve`.
 * The prefetcher helps only when the I-cache is too small for the working set. A stride
   prefetcher on the D-side would matter more for these workloads.
+* The global history is updated at resolution, which avoids repair logic but makes gshare's
+  indices timing-dependent (the `crc32` effect above). A speculative history with checkpointed
+  repair is the natural next step.
 * Tables are flop arrays read combinationally in IF. For a real clock target they would move to
   SRAM, and the prediction path would need pipelining. The design was not synthesised.
 * CoreMark is used as a workload (2 iterations), not as a compliant CoreMark score.

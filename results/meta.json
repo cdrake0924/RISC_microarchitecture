@@ -1,6 +1,6 @@
 {
-  "date": "2026-09-29T15:54:54",
-  "verilator": "Verilator 5.050 2026-07-01 rev vUNKNOWN-built20260702",
-  "gcc": "riscv-none-elf-gcc.exe (xPack GNU RISC-V Embedded GCC x86_64) 15.2.0",
+  "date": "2026-09-29T18:35:40",
+  "verilator": "Verilator 5.020 2024-01-01 rev conda-forge build 0",
+  "gcc": "riscv-none-elf-gcc (xPack GNU RISC-V Embedded GCC x86_64) 14.2.0",
   "memory_latency": 10
 }

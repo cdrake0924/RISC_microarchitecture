@@ -143,12 +143,33 @@ The verification geometries are chosen to reach corners the default configuratio
 
 ### Latest results
 
-@@REGRESS_RESULTS@@
+`make regress` (suite `full`) on 2026-09-29, Verilator 5.020 and xPack GCC 14.2 under WSL2, 6
+parallel jobs:
+
+* **776 / 776 simulations pass** (735 system-level runs on 10 configurations, 41 block-level runs
+  on 14 unit configurations), 66 s wall time once the models are built.
+* **100 / 100 functional-coverage bins hit**, merged over all runs: arch 14, bp 8, btb 3, bus 5,
+  dcache 31, icache 23, prefetch 5, ras 7, tournament 4.
+* CoreMark alone on the `full` configuration: `rvfi_pc_checker` checks the next PC of 678,334
+  retired instructions, `redirect_checker` checks 7,485 pipeline redirects, and `mem_scoreboard`
+  checks 116,537 loads, 32,351 stores and 637,648 instruction fetches, all without a mismatch.
+
+| Configuration | Passed | | Configuration | Passed |
+|---|---|---|---|---|
+| `baseline` | 70 / 70 | | `tiny` | 83 / 83 |
+| `static` | 59 / 59 | | `gshare_wt` | 70 / 70 |
+| `bp_only` | 59 / 59 | | `fifo_4w` | 70 / 70 |
+| `caches` | 59 / 59 | | `rand_8w` | 72 / 72 |
+| `full` | 134 / 134 | | `dcache_only` | 59 / 59 |
+| unit: 8 `tb_l1_cache` configurations | 31 / 31 | | unit: 6 `tb_bp` configurations | 10 / 10 |
+
+The report (`build/regress/report.md`) lists every run with its log, and a JUnit XML file is
+written for CI.
 
 ## Issues found by the regression
 
-Two recent failures show why the environment has independent checks at several levels. In both
-cases the RTL was right and the test's model of it was wrong:
+Three recent failures show why the environment has independent checks at several levels. In all
+three the RTL was right, and the test's model of it (or the simulator) was wrong:
 
 * **Predictor unit bench, seed-dependent assertion failure.** `CallRetDecodeConsistent` checks
   that the IF pre-decoder and ID/EX classify every call and return identically. It compares the
@@ -159,3 +180,10 @@ cases the RTL was right and the test's model of it was wrong:
 * **`hpm_counters` on write-through configurations.** The test expected FENCE.I to write back the
   16 lines it had just stored to. A write-through D-cache never holds dirty lines, so the counter
   correctly read 0. The test now reads the write-policy bit from the configuration register.
+* **Predictor unit bench, false BTB hits under Verilator 5.020 only.** To predict which BTB entry
+  a new jump will evict, `tb_bp` collects the PCs that map to the same entry in a queue declared
+  inside a loop body. The bench passed with Verilator 5.050 and failed 9 of 41 runs with 5.020
+  (the version CI uses). Verilator 5.020 does not re-initialise a block-local variable that has
+  no initialiser on each loop iteration, so the queue kept entries from earlier iterations and
+  the reference model expected hits that the RTL correctly did not produce. The bench now clears
+  the queue explicitly. Running the regression on the CI tool version is what exposed it.

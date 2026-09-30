@@ -281,6 +281,9 @@ module tb_bp #(
       // aliasing sites overwrite each other: forget every site that maps to the same entry
       begin
         logic [31:0] victims[$];
+        // Explicit: Verilator 5.020 does not re-initialise block-local variables without an
+        // initialiser on each loop iteration (5.050 does), so the queue would keep old entries.
+        victims.delete();
         foreach (targets[p]) if (p[$clog2(BTB):1] == pc[$clog2(BTB):1]) victims.push_back(p);
         foreach (victims[v]) targets.delete(victims[v]);
       end

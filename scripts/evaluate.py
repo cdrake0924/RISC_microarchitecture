@@ -413,7 +413,12 @@ PALETTE = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4
 SURFACE, INK, INK2, GRID, AXIS = "#fcfcfb", "#0b0b0b", "#52514e", "#e1e0d9", "#c3c2b7"
 
 
-def setup_axes(ax, ylabel, title):
+def tex_safe(s):
+    """Labels like "I$ + D$" would otherwise be rendered as matplotlib mathtext."""
+    return s.replace("$", r"\$")
+
+
+def setup_axes(ax, ylabel, title, title_pad=12):
     ax.set_facecolor(SURFACE)
     ax.figure.set_facecolor(SURFACE)
     ax.grid(axis="y", color=GRID, linewidth=0.8)
@@ -422,8 +427,8 @@ def setup_axes(ax, ylabel, title):
         ax.spines[s].set_visible(False)
     ax.spines["bottom"].set_color(AXIS)
     ax.tick_params(colors=INK2, labelsize=9, length=0)
-    ax.set_ylabel(ylabel, color=INK2, fontsize=10)
-    ax.set_title(title, color=INK, fontsize=12, loc="left", pad=12)
+    ax.set_ylabel(tex_safe(ylabel), color=INK2, fontsize=10)
+    ax.set_title(tex_safe(title), color=INK, fontsize=12, loc="left", pad=title_pad)
 
 
 def grouped_bars(path, groups, series, values, ylabel, title, value_fmt=None, ylim=None,
@@ -434,38 +439,50 @@ def grouped_bars(path, groups, series, values, ylabel, title, value_fmt=None, yl
     fig, ax = plt.subplots(figsize=figsize, dpi=150)
     for i, s in enumerate(series):
         xs = [g + (i - (n - 1) / 2) * width for g in range(len(groups))]
-        ax.bar(xs, values[s], width=width, color=PALETTE[i], label=s,
+        ax.bar(xs, values[s], width=width, color=PALETTE[i], label=tex_safe(s),
                edgecolor=SURFACE, linewidth=1.0)
-        if value_fmt:  # label only the last group (the summary)
+        if value_fmt:  # label only the last group (the summary), vertically so labels never overlap
             ax.annotate(value_fmt(values[s][-1]), (xs[-1], values[s][-1]), ha="center",
                         va="bottom", fontsize=7, color=INK2, xytext=(0, 2),
-                        textcoords="offset points")
-    setup_axes(ax, ylabel, title)
+                        textcoords="offset points", rotation=90)
+    setup_axes(ax, ylabel, title, title_pad=28)
     ax.set_xticks(range(len(groups)))
     ax.set_xticklabels(groups, fontsize=8.5, color=INK2, rotation=20, ha="right")
     if ylim:
         ax.set_ylim(*ylim)
-    ax.legend(frameon=False, fontsize=8.5, ncol=min(n, 6), loc="upper left",
-              bbox_to_anchor=(0, 1.0), labelcolor=INK2)
+    else:
+        ax.set_ylim(0, ax.get_ylim()[1] * 1.08)  # room for the summary labels
+    # legend in the band between title and plot, so it never covers a bar
+    ax.legend(frameon=False, fontsize=8.5, ncol=min(n, 6), loc="lower left",
+              bbox_to_anchor=(0, 1.0), labelcolor=INK2, borderaxespad=0.2)
     fig.tight_layout()
     fig.savefig(path, facecolor=SURFACE)
     plt.close(fig)
 
 
-def lines_chart(path, xs, xlabels, series, values, ylabel, title, xlabel):
+def lines_chart(path, xs, xlabels, series, values, ylabel, title, xlabel, logy=False):
     import matplotlib.pyplot as plt
-    fig, ax = plt.subplots(figsize=(8, 4.2), dpi=150)
+    from matplotlib.ticker import FixedLocator, NullLocator, ScalarFormatter
+    fig, ax = plt.subplots(figsize=(8.8, 4.2), dpi=150)
     for i, s in enumerate(series):
         ax.plot(xs, values[s], color=PALETTE[i], linewidth=2, marker="o", markersize=5,
-                markeredgecolor=SURFACE, markeredgewidth=1.5, label=s)
-        ax.annotate(s, (xs[-1], values[s][-1]), xytext=(6, 0), textcoords="offset points",
-                    va="center", fontsize=8.5, color=INK2)
+                markeredgecolor=SURFACE, markeredgewidth=1.5, label=tex_safe(s))
     setup_axes(ax, ylabel, title)
+    if logy:  # log scale keeps small differences (and cross-overs) visible next to large values
+        ax.set_yscale("log")
+        lo = min(min(v) for v in values.values())
+        hi = max(max(v) for v in values.values())
+        ticks = [t for t in (1, 1.5, 2, 3, 5, 10, 20, 30, 50, 100) if lo / 1.3 <= t <= hi * 1.3]
+        ax.yaxis.set_major_locator(FixedLocator(ticks))
+        ax.yaxis.set_major_formatter(ScalarFormatter())
+        ax.yaxis.set_minor_locator(NullLocator())
     ax.set_xticks(xs)
     ax.set_xticklabels(xlabels, fontsize=9, color=INK2)
-    ax.set_xlabel(xlabel, color=INK2, fontsize=10)
-    ax.set_xlim(xs[0] - 0.3, xs[-1] + 1.6)
-    ax.legend(frameon=False, fontsize=9, loc="upper left", labelcolor=INK2)
+    ax.set_xlabel(tex_safe(xlabel), color=INK2, fontsize=10)
+    ax.set_xlim(xs[0] - 0.3, xs[-1] + 0.3)
+    # legend outside the plot area, so it never covers a data point
+    ax.legend(frameon=False, fontsize=9, loc="upper left", bbox_to_anchor=(1.01, 1.0),
+              labelcolor=INK2)
     fig.tight_layout()
     fig.savefig(path, facecolor=SURFACE)
     plt.close(fig)
@@ -537,8 +554,8 @@ def plots():
         vals = {l: [geomean([r["cpi"] for r in lat if r["label"] == l and r["latency"] == L])
                     for L in LATENCIES] for l in labels}
         lines_chart(FIGURES / "latency_cpi.png", list(range(len(LATENCIES))),
-                    [str(L) for L in LATENCIES], labels, vals, "geomean CPI",
-                    "CPI vs main-memory latency", "memory latency (cycles)")
+                    [str(L) for L in LATENCIES], labels, vals, "geomean CPI (log scale)",
+                    "CPI vs main-memory latency", "memory latency (cycles)", logy=True)
     print(f"[eval] figures in {FIGURES}")
 
 

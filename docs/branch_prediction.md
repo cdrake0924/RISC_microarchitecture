@@ -22,6 +22,12 @@ transfers one stage earlier, at the output of the prefetch buffer. It redirects 
 the instruction reaches ID/EX, so a correctly predicted taken branch or jump does not wait for
 ID/EX at all.
 
+The benefit differs between branches and jumps. A correctly predicted taken branch skips its
+target-computation cycle and the refetch. A jump, however, spends two cycles in ID/EX without a
+branch-target ALU, the second to compute the link address. With a 1-cycle I-cache hit, that
+second cycle already hides the refetch. The RAS and BTB therefore pay off mainly when the target
+misses in the I-cache, or on a system without one ([evaluation §5](evaluation.md#5-return-address-stack-and-indirect-jump-btb)).
+
 ## Organisation
 
 ```mermaid
@@ -168,6 +174,9 @@ for measured accuracy and speedup.
 
 * The GHR is updated at resolution rather than speculatively at prediction. With a two-stage
   pipeline at most one branch is unresolved at a time, so the history lags by at most one branch.
-  A deeper pipeline would need speculative history with repair.
+  A deeper pipeline would need speculative history with repair. The lag has a subtle cost: whether
+  the previous branch has resolved depends on whether *it* was mispredicted, so the same branch
+  stream can produce different gshare indices. On `crc32` this traps the tournament predictor in a
+  state where two branches collide (see [evaluation §3](evaluation.md#3-branch-direction-prediction)).
 * Tables are not partially tagged, so aliasing between branches is unfiltered. A TAGE-style
   predictor is the natural next step for accuracy, at a large cost in area for a core this size.

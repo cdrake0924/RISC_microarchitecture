@@ -3,8 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // crc32: bitwise (table-less) CRC-32 over a 6 KiB buffer.
-// Character: a tight inner loop whose data-dependent branch is taken ~50% of the time at random,
-// plus a perfectly predictable loop branch; tiny instruction footprint, streaming data.
+// Character: a tight 8-iteration inner loop inside a byte loop; tiny instruction footprint,
+// streaming data. At -O2 GCC if-converts the data-dependent `if (crc & 1)` into branch-free code,
+// so the only branches left are the two loop branches (inner: 7 taken, 1 not taken per byte).
+// Predicting the inner-loop exit needs 8 bits of global history.
 
 #include "perf.h"
 #include "platform.h"
